@@ -1,0 +1,31 @@
+{
+	"ImportPath": "github.com/chlins/boring",
+	"GoVersion": "go1.10",
+	"GodepVersion": "v79",
+	"Deps": [
+		{
+			"ImportPath": "github.com/fatih/color",
+			"Comment": "v1.7.0-2-g2d68451",
+			"Rev": "2d684516a8861da43017284349b7e303e809ac21"
+		},
+		{
+			"ImportPath": "github.com/mattn/go-colorable",
+			"Comment": "v0.0.9-13-g7dc3415",
+			"Rev": "7dc3415be66d7cc68bf0182f35c8d31f8d2ad8a7"
+		},
+		{
+			"ImportPath": "github.com/mattn/go-isatty",
+			"Comment": "v0.0.3-7-g6ca4dbf",
+			"Rev": "6ca4dbf54d38eea1a992b3c722a76a5d1c4cb25c"
+		},
+		{
+			"ImportPath": "github.com/schollz/closestmatch",
+			"Comment": "v2.1.0-12-g19d3b33",
+			"Rev": "19d3b334fdfcb0151de79319f1fe1dfc41de758c"
+		},
+		{
+			"ImportPath": "golang.org/x/sys/unix",
+			"Rev": "31355384c89b50e6faeffdb36f64a77a8210188e"
+		}
+	]
+}
