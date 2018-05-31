@@ -13,32 +13,18 @@ import (
 // substring sizes and carrys a map of the substrings for
 // easy lookup
 type ClosestMatch struct {
+	Substrings     map[string]map[string]struct{}
 	SubstringSizes []int
-	SubstringToID  map[string]map[uint32]struct{}
-	ID             map[uint32]IDInfo
-}
-
-// IDInfo carries the information about the keys
-type IDInfo struct {
-	Key           string
-	NumSubstrings int
 }
 
 // New returns a new structure for performing closest matches
 func New(possible []string, subsetSize []int) *ClosestMatch {
 	cm := new(ClosestMatch)
+
 	cm.SubstringSizes = subsetSize
-	cm.SubstringToID = make(map[string]map[uint32]struct{})
-	cm.ID = make(map[uint32]IDInfo)
-	for i, s := range possible {
-		substrings := cm.splitWord(strings.ToLower(s))
-		cm.ID[uint32(i)] = IDInfo{Key: s, NumSubstrings: len(substrings)}
-		for substring := range substrings {
-			if _, ok := cm.SubstringToID[substring]; !ok {
-				cm.SubstringToID[substring] = make(map[uint32]struct{})
-			}
-			cm.SubstringToID[substring][uint32(i)] = struct{}{}
-		}
+	cm.Substrings = make(map[string]map[string]struct{})
+	for _, s := range possible {
+		cm.Substrings[s] = cm.splitWord(strings.ToLower(s))
 	}
 
 	return cm
@@ -73,160 +59,162 @@ func (cm *ClosestMatch) Save(filename string) error {
 	w := gzip.NewWriter(f)
 	defer w.Close()
 	enc := json.NewEncoder(w)
-	// enc.SetIndent("", " ")
+	enc.SetIndent("", " ")
 	return enc.Encode(cm)
 }
 
-func (cm *ClosestMatch) worker(id int, jobs <-chan job, results chan<- result) {
-	for j := range jobs {
-		m := make(map[string]int)
-		if ids, ok := cm.SubstringToID[j.substring]; ok {
-			weight := 1000 / len(ids)
-			for id := range ids {
-				if _, ok2 := m[cm.ID[id].Key]; !ok2 {
-					m[cm.ID[id].Key] = 0
+// ClosestN searches for the `searchWord` and returns the `n` closest matches
+// as a string slice
+func (cm *ClosestMatch) ClosestN(searchWord string, n int) []string {
+	searchWordHash := cm.splitWord(searchWord)
+	worstBestVal := 1000000
+	bestWords := make(map[string]int)
+	for word := range cm.Substrings {
+		if len(bestWords) < n {
+			newVal := cm.compareIfBetter(&searchWordHash, word, 0, len(word)+len(searchWord))
+			bestWords[word] = newVal
+			if newVal < worstBestVal {
+				worstBestVal = newVal
+			}
+		} else {
+			newVal := cm.compareIfBetter(&searchWordHash, word, worstBestVal, len(word)+len(searchWord))
+			if newVal > worstBestVal {
+				keyToDelete := ""
+				newWorstBestVal := 100000
+				for key, val := range bestWords {
+					if val == worstBestVal {
+						keyToDelete = key
+					} else if val < newWorstBestVal {
+						newWorstBestVal = val
+					}
 				}
-				m[cm.ID[id].Key] += 1 + 1000/len(cm.ID[id].Key) + weight
+				delete(bestWords, keyToDelete)
+				bestWords[word] = newVal
+				if newVal < newWorstBestVal {
+					newWorstBestVal = newVal
+				}
+				worstBestVal = newWorstBestVal
 			}
-		}
-		results <- result{m: m}
-	}
-}
 
-type job struct {
-	substring string
-}
-
-type result struct {
-	m map[string]int
-}
-
-func (cm *ClosestMatch) match(searchWord string) map[string]int {
-	searchSubstrings := cm.splitWord(searchWord)
-	searchSubstringsLen := len(searchSubstrings)
-
-	jobs := make(chan job, searchSubstringsLen)
-	results := make(chan result, searchSubstringsLen)
-	workers := 8
-
-	for w := 1; w <= workers; w++ {
-		go cm.worker(w, jobs, results)
-	}
-
-	for substring := range searchSubstrings {
-		jobs <- job{substring: substring}
-	}
-	close(jobs)
-
-	m := make(map[string]int)
-	for a := 1; a <= searchSubstringsLen; a++ {
-		r := <-results
-		for key := range r.m {
-			if _, ok := m[key]; ok {
-				m[key] += r.m[key]
-			} else {
-				m[key] = r.m[key]
-			}
 		}
 	}
 
-	return m
+	// Return a sorted list
+	bestWordsSlice := make([]string, len(bestWords))
+	nm := map[int][]string{}
+	var a []int
+	for k, v := range bestWords {
+		nm[v] = append(nm[v], k)
+	}
+	for k := range nm {
+		a = append(a, k)
+	}
+	sort.Sort(sort.Reverse(sort.IntSlice(a)))
+	i := 0
+	for _, k := range a {
+		for _, s := range nm[k] {
+			bestWordsSlice[i] = s
+			i++
+		}
+	}
+
+	return bestWordsSlice[0:i]
 }
 
 // Closest searches for the `searchWord` and returns the closest match
 func (cm *ClosestMatch) Closest(searchWord string) string {
-	for _, pair := range rankByWordCount(cm.match(searchWord)) {
-		return pair.Key
-	}
-	return ""
-}
-
-// ClosestN searches for the `searchWord` and returns the n closests matches
-func (cm *ClosestMatch) ClosestN(searchWord string, max int) []string {
-	matches := make([]string, 0, max)
-	for i, pair := range rankByWordCount(cm.match(searchWord)) {
-		if i >= max {
-			break
+	searchWordHash := cm.splitWord(searchWord)
+	bestVal := 0
+	bestWord := ""
+	for word := range cm.Substrings {
+		newVal := cm.compareIfBetter(&searchWordHash, word, bestVal, len(word)+len(searchWord))
+		if newVal > bestVal {
+			bestVal = newVal
+			bestWord = word
 		}
-		matches = append(matches, pair.Key)
 	}
-	return matches
+	return bestWord
 }
-
-func rankByWordCount(wordFrequencies map[string]int) PairList {
-	pl := make(PairList, len(wordFrequencies))
-	i := 0
-	for k, v := range wordFrequencies {
-		pl[i] = Pair{k, v}
-		i++
-	}
-	sort.Sort(sort.Reverse(pl))
-	return pl
-}
-
-type Pair struct {
-	Key   string
-	Value int
-}
-
-type PairList []Pair
-
-func (p PairList) Len() int           { return len(p) }
-func (p PairList) Less(i, j int) bool { return p[i].Value < p[j].Value }
-func (p PairList) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
 
 func (cm *ClosestMatch) splitWord(word string) map[string]struct{} {
 	wordHash := make(map[string]struct{})
 	for _, j := range cm.SubstringSizes {
-		for i := 0; i < len(word)-j+1; i++ {
-			substring := string(word[i : i+j])
-			if len(strings.TrimSpace(substring)) > 0 {
-				wordHash[string(word[i:i+j])] = struct{}{}
-			}
+		for i := 0; i < len(word)-j; i++ {
+			wordHash[string(word[i:i+j])] = struct{}{}
 		}
-	}
-	if len(wordHash) == 0 {
-		wordHash[word] = struct{}{}
 	}
 	return wordHash
 }
 
-// AccuracyMutatingWords runs some basic tests against the wordlist to
+func (cm *ClosestMatch) compareIfBetter(one *map[string]struct{}, substring string, minPercentage int, lenSum int) int {
+	minPercentage = minPercentage * lenSum / (2 * 1000)
+	shared := 0
+	two := cm.Substrings[substring]
+	lenTwo := len(two)
+	if len(*one) < lenTwo {
+		numberLeft := len(*one)
+		for item := range *one {
+			if _, ok := two[item]; ok {
+				shared++
+			} else if numberLeft+shared < minPercentage {
+				return (2 * 1000) / lenSum * shared
+			}
+			numberLeft--
+		}
+	} else {
+		numberLeft := lenTwo
+		for item := range two {
+			if _, ok := (*one)[item]; ok {
+				shared++
+			} else if numberLeft+shared < minPercentage {
+				return (2 * 1000) / lenSum * shared
+			}
+			numberLeft--
+		}
+	}
+	return (2 * 1000) / lenSum * shared
+}
+
+// Accuracy runs some basic tests against the wordlist to
 // see how accurate this bag-of-characters method is against
 // the target dataset
-func (cm *ClosestMatch) AccuracyMutatingWords() float64 {
+func (cm *ClosestMatch) Accuracy() float64 {
 	rand.Seed(1)
 	percentCorrect := 0.0
 	numTrials := 0.0
 
-	for wordTrials := 0; wordTrials < 200; wordTrials++ {
+	for wordTrials := 0; wordTrials < 100; wordTrials++ {
 
 		var testString, originalTestString string
-		testStringNum := rand.Intn(len(cm.ID))
+		testStringNum := rand.Intn(len(cm.Substrings))
 		i := 0
-		for id := range cm.ID {
+		for s := range cm.Substrings {
 			i++
 			if i != testStringNum {
 				continue
 			}
-			originalTestString = cm.ID[id].Key
+			originalTestString = s
 			break
 		}
 
-		var words []string
-		choice := rand.Intn(3)
-		if choice == 0 {
-			// remove a random word
-			words = strings.Split(originalTestString, " ")
+		// remove a random word
+		for trial := 0; trial < 4; trial++ {
+			words := strings.Split(originalTestString, " ")
 			if len(words) < 3 {
 				continue
 			}
 			deleteWordI := rand.Intn(len(words))
 			words = append(words[:deleteWordI], words[deleteWordI+1:]...)
 			testString = strings.Join(words, " ")
-		} else if choice == 1 {
-			// remove a random word and reverse
-			words = strings.Split(originalTestString, " ")
+			if cm.Closest(testString) == originalTestString {
+				percentCorrect += 1.0
+			}
+			numTrials += 1.0
+		}
+
+		// remove a random word and reverse
+		for trial := 0; trial < 4; trial++ {
+			words := strings.Split(originalTestString, " ")
 			if len(words) > 1 {
 				deleteWordI := rand.Intn(len(words))
 				words = append(words[:deleteWordI], words[deleteWordI+1:]...)
@@ -237,9 +225,15 @@ func (cm *ClosestMatch) AccuracyMutatingWords() float64 {
 				continue
 			}
 			testString = strings.Join(words, " ")
-		} else {
-			// remove a random word and shuffle and replace 2 random letters
-			words = strings.Split(originalTestString, " ")
+			if cm.Closest(testString) == originalTestString {
+				percentCorrect += 1.0
+			}
+			numTrials += 1.0
+		}
+
+		// remove a random word and shuffle and replace random letter
+		for trial := 0; trial < 4; trial++ {
+			words := strings.Split(originalTestString, " ")
 			if len(words) > 1 {
 				deleteWordI := rand.Intn(len(words))
 				words = append(words[:deleteWordI], words[deleteWordI+1:]...)
@@ -257,65 +251,18 @@ func (cm *ClosestMatch) AccuracyMutatingWords() float64 {
 			testString = testString[:ii] + string(letters[rand.Intn(len(letters))]) + testString[ii+1:]
 			ii = rand.Intn(len(testString))
 			testString = testString[:ii] + string(letters[rand.Intn(len(letters))]) + testString[ii+1:]
-		}
-		closest := cm.Closest(testString)
-		if closest == originalTestString {
-			percentCorrect += 1.0
-		} else {
-			//fmt.Printf("Original: %s, Mutilated: %s, Match: %s\n", originalTestString, testString, closest)
-		}
-		numTrials += 1.0
-	}
-	return 100.0 * percentCorrect / numTrials
-}
-
-// AccuracyMutatingLetters runs some basic tests against the wordlist to
-// see how accurate this bag-of-characters method is against
-// the target dataset when mutating individual letters (adding, removing, changing)
-func (cm *ClosestMatch) AccuracyMutatingLetters() float64 {
-	rand.Seed(1)
-	percentCorrect := 0.0
-	numTrials := 0.0
-
-	for wordTrials := 0; wordTrials < 200; wordTrials++ {
-
-		var testString, originalTestString string
-		testStringNum := rand.Intn(len(cm.ID))
-		i := 0
-		for id := range cm.ID {
-			i++
-			if i != testStringNum {
-				continue
+			if cm.Closest(testString) == originalTestString {
+				percentCorrect += 1.0
 			}
-			originalTestString = cm.ID[id].Key
-			break
+			numTrials += 1.0
 		}
-		testString = originalTestString
 
-		// letters to replace with
-		letters := "abcdefghijklmnopqrstuvwxyz"
-
-		choice := rand.Intn(3)
-		if choice == 0 {
-			// replace random letter
-			ii := rand.Intn(len(testString))
-			testString = testString[:ii] + string(letters[rand.Intn(len(letters))]) + testString[ii+1:]
-		} else if choice == 1 {
-			// delete random letter
-			ii := rand.Intn(len(testString))
-			testString = testString[:ii] + testString[ii+1:]
-		} else {
-			// add random letter
-			ii := rand.Intn(len(testString))
-			testString = testString[:ii] + string(letters[rand.Intn(len(letters))]) + testString[ii:]
-		}
-		closest := cm.Closest(testString)
-		if closest == originalTestString {
+		// test the original string
+		if cm.Closest(testString) == originalTestString {
 			percentCorrect += 1.0
-		} else {
-			//fmt.Printf("Original: %s, Mutilated: %s, Match: %s\n", originalTestString, testString, closest)
 		}
 		numTrials += 1.0
+
 	}
 
 	return 100.0 * percentCorrect / numTrials

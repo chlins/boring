@@ -1,13 +1,11 @@
 
 # closestmatch :page_with_curl:
 
-<a href="#"><img src="https://img.shields.io/badge/version-2.1.0-brightgreen.svg?style=flat-square" alt="Version"></a>
 <a href="https://travis-ci.org/schollz/closestmatch"><img src="https://img.shields.io/travis/schollz/closestmatch.svg?style=flat-square" alt="Build Status"></a>
 <a href="http://gocover.io/github.com/schollz/closestmatch"><img src="https://img.shields.io/badge/coverage-98%25-brightgreen.svg?style=flat-square" alt="Code Coverage"></a>
 <a href="https://godoc.org/github.com/schollz/closestmatch"><img src="https://img.shields.io/badge/api-reference-blue.svg?style=flat-square" alt="GoDoc"></a>
 
 *closestmatch* is a simple and fast Go library for fuzzy matching an input string to a list of target strings. *closestmatch* is useful for handling input from a user where the input (which could be mispelled or out of order) needs to match a key in a database. *closestmatch* uses a [bag-of-words approach](https://en.wikipedia.org/wiki/Bag-of-words_model) to precompute character n-grams to represent each possible target string. The closest matches have highest overlap between the sets of n-grams. The precomputation scales well and is much faster and more accurate than Levenshtein for long strings.
-
 
 Getting Started
 ===============
@@ -48,71 +46,57 @@ fmt.Println(cm.ClosestN("kind gizard",3))
 
 ```golang
 // Calculate accuracy
-fmt.Println(cm.AccuracyMutatingWords())
-// ~ 66 % (still way better than Levenshtein which hits 0% with this particular set)
+fmt.Println(cm.Accuracy())
+// ~ 53 % (still way better than Levenshtein which hits 0% with this particular set)
 
 // Improve accuracy by adding more bags
 bagSizes = []int{2, 3, 4}
 cm = closestmatch.New(wordsToTest, bagSizes)
-fmt.Println(cm.AccuracyMutatingWords())
-// accuracy improves to ~ 76 %
+fmt.Println(cm.Accuracy())
+// accuracy improves to ~ 75 %
 ```
 
 #### Save/Load
 
 ```golang
 // Save your current calculated bags
-cm.Save("closestmatches.gob")
+cm.Save("closestmatches.json")
 
 // Open it again
-cm2, _ := closestmatch.Load("closestmatches.gob")
+cm2, _ := closestmatch.Load("closestmatches.json")
 fmt.Println(cm2.Closest("lizard wizard"))
 // prints "The Lizard Wizard"
 ```
 
-### Advantages
+### Accuracy and Speed
 
-*closestmatch* is more accurate than Levenshtein for long strings (like in the test corpus). 
+*closestmatch* is more accurate than Levenshtein for long strings (like in the test corpus). If you run `go test` the tests will pass which validate that Levenshtein performs < 60% accuracy and *closestmatch* performs with > 98% accuracy. 
 
-*closestmatch* is ~20x faster than [a fast implementation of Levenshtein](https://groups.google.com/forum/#!topic/golang-nuts/YyH1f_qCZVc). Try it yourself with the benchmarks:
+*closestmatch* is 6-7x faster than [a fast implementation of Levenshtein](https://groups.google.com/forum/#!topic/golang-nuts/YyH1f_qCZVc). Try it yourself with the benchmarks:
 
 ```bash
-cd $GOPATH/src/github.com/schollz/closestmatch && go test -run=None -bench=. > closestmatch.bench
-cd $GOPATH/src/github.com/schollz/closestmatch/levenshtein && go test -run=None -bench=. > levenshtein.bench
+cd $GOPATH/src/github.com/schollz/closestmatch && go test -bench=. > closestmatch.bench
+cd $GOPATH/src/github.com/schollz/closestmatch/levenshtein && go test -bench=. > levenshtein.bench
 benchcmp levenshtein.bench ../closestmatch.bench
 ```
 
-which gives the following benchmark (on Intel i7-3770 CPU @ 3.40GHz w/ 8 processors):
+which gives something like
 
 ```bash
 benchmark                 old ns/op     new ns/op     delta
-BenchmarkNew-8            1.47          1933870       +131555682.31%
-BenchmarkClosestOne-8     104603530     4855916       -95.36%
+BenchmarkNew-8            1.49          624681        +41924799.33%
+BenchmarkClosestOne-8     432350        61401         -85.80%
+BenchmarkLargeFile-8      122050000     19925964      -83.67%
 ```
 
-The `New()` function in *closestmatch* is so slower than *levenshtein* because there is precomputation needed.
+The `New()` function is so much faster in *levenshtein* because there is no precomputation needed (obviously).
 
-### Disadvantages
+## Todo
 
-*closestmatch* does worse for matching lists of single words, like a dictionary. For comparison:
-
-
-```
-$ cd $GOPATH/src/github.com/schollz/closestmatch && go test
-Accuracy with mutating words in book list:      90.0%
-Accuracy with mutating letters in book list:    100.0%
-Accuracy with mutating letters in dictionary:   38.9%
-```
-
-while levenshtein performs slightly better for a single-word dictionary (but worse for longer names, like book titles):
-
-```
-$ cd $GOPATH/src/github.com/schollz/closestmatch/levenshtein && go test
-Accuracy with mutating words in book list:      40.0%
-Accuracy with mutating letters in book list:    100.0%
-Accuracy with mutating letters in dictionary:   64.8%
-```
-
-## License
-
-MIT
+- [x] ClosestN(n int) returns closest n matches
+- [x] Function to compare accuracy (for tests?)
+- [x] Open should have []int{1,2,3} for the specified substructure lengths, compare different lengths
+- [x] Save/Load for precomputation (change Open -> New)
+- [x] Use more intuitive variable names + improve documentation
+- [x] How does this relate to bag of words?
+- [ ] Compare to agrep (write a utility)
